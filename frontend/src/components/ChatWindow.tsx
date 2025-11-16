@@ -70,6 +70,17 @@ const ChatWindow = () => {
     setInput("");
     setIsLoading(true);
 
+    // Silent background memory call
+    fetch(`${API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat: input,
+      }),
+    }).catch(() => {});
+
     // Save user message to database
     supabase
       .from('chat_messages')

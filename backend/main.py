@@ -127,6 +127,98 @@ async def ask(req: AskRequest):
         "answer": answer,
         "sources": [d["id"] for d in docs[:req.top_k]]
     }
+class ChatStoreRequest(BaseModel):
+    chat: str
+
+class ChatStoreRequest(BaseModel):
+    chat: str
+
+@app.post("/chat")
+async def chat_analyze(req: ChatStoreRequest):
+    """
+    Analyze chat message and decide if it should be stored.
+    """
+
+    prompt = """
+You are an intelligent classifier that decides if a piece of text should be stored
+in a long-term personal memory knowledge base.
+
+User message:
+"{chat}"
+
+Your job:
+1. Decide if this text is valuable to store.
+2. If it's just greetings (hi, hello, ok), or random chat, mark flag = false.
+3. If the text contains useful personal info, knowledge, preferences,
+   project notes, plans, tasks, or anything that can be helpful later,
+   mark flag = true.
+4. If flag=true:
+    - Extract the core important information only.
+    - Create a short title summarizing the memory.
+5. Respond ONLY in JSON with keys: flag, title, information.
+
+Example Response:
+{
+  "flag": true,
+  "title": "Rust Project Idea",
+  "information": "Ayush wants to build a hate speech detection system in Rust."
+}
+
+Now analyze the chat and respond:
+""".replace("{chat}", req.chat)
+    # <-- This prevents f-string issues
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(prompt)
+        llm_json = response.text
+    except Exception as e:
+        return {"error": f"Gemini Error: {str(e)}"}
+    
+    def clean_llm_json(text: str) -> str:
+        text = text.strip()
+    # Remove triple backticks and language tags
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+        return text
+    import json 
+    cleaned = clean_llm_json(llm_json)
+
+    try:
+        result = json.loads(cleaned)
+    except Exception:
+        return {
+        "error": "LLM returned invalid JSON",
+        "raw": llm_json,
+        "cleaned_attempt": cleaned
+    }
+
+    if not result.get("flag"):
+        return {
+            "flag": False,
+            "title": None,
+            "information": None
+        }
+
+    # Auto-ingest memory
+    title = result.get("title", "memory")
+    information = result.get("information", "")
+
+    chunks = chunk_text(information, chunk_size_chars=1200, overlap=200)
+
+    stored = 0
+    for ch in chunks:
+        emb = jina_embed(ch)
+        add_chunk(title, ch, emb)
+        stored += 1
+
+    return {
+        "flag": True,
+        "title": title,
+        "information": information,
+        "stored_chunks": stored
+    }
+
 
 
 @app.get("/documents")
