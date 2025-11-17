@@ -25,7 +25,7 @@ def jina_embed(text: str) -> np.ndarray:
         "input": [text]  # ✅ MUST be a list
     }
 
-    response = requests.post(url, json=payload, headers=headers, timeout=15)
+    response = requests.post(url, json=payload, headers=headers, timeout=120)
 
     if response.status_code != 200:
         raise RuntimeError(f"Jina API Error: {response.text}")

@@ -1,4 +1,6 @@
-import { Sparkles } from "lucide-react";
+import { Sparkles, Database } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 const Navbar = () => {
   return (
@@ -12,6 +14,13 @@ const Navbar = () => {
             Personal AI Assistant
           </h1>
         </div>
+        
+        <Link to="/admin/db">
+          <Button variant="ghost" size="sm" className="gap-2">
+            <Database className="w-4 h-4" />
+            <span className="hidden sm:inline">Database Inspector</span>
+          </Button>
+        </Link>
       </div>
     </nav>
   );

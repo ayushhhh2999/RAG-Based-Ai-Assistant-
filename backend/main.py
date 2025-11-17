@@ -5,14 +5,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import uvicorn
 from embeddings import jina_embed
-from db import add_chunk, query_embeddings, collection
-from utils import chunk_text, build_prompt
-
+from db import add_chunk, query_embeddings, collection,clean_messed_up_data,find_corrupted_chunks
+from utils import chunk_text, build_prompt, extract_text_from_file
+from models import IngestRequest, AskRequest, ChatStoreRequest
 import google.generativeai as genai  # ✅ Gemini import
 
 from fastapi.middleware.cors import CORSMiddleware
-
-
+from pypdf import PdfReader
+import io
 
 
 load_dotenv()
@@ -34,41 +34,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ================== MODELS ==================
-class IngestRequest(BaseModel):
-    doc_id: str
-    text: str
+
+from fastapi import UploadFile, File, Form
+from pydantic import BaseModel
 
 @app.post("/ingest")
 async def ingest(
     doc_id: str = Form(...),
     file: UploadFile = File(None),
-    text: str = Form(None)
+    text: str = Form(None),
 ):
-    content = ""
+    """
+    Ingest file or raw text → extract text → chunk → embed → store in ChromaDB.
+    """
 
+    # 1️⃣ Extract content
     if file and file.filename:
-        content = (await file.read()).decode(errors="ignore")
+        file_bytes = await file.read()
+        content = extract_text_from_file(file_bytes, file.filename)
+
+        if not content.strip():
+            return {"error": "Unable to extract text from file."}
 
     elif text:
         content = text.strip()
 
     else:
-        return {"error": "Provide file or text"}
+        return {"error": "Provide either a file or text"}
 
+    # 2️⃣ Chunk text
     chunks = chunk_text(content, chunk_size_chars=1200, overlap=200)
 
+    # 3️⃣ Store chunks
     added = 0
-    for idx, ch in enumerate(chunks):
+    for idx, chunk in enumerate(chunks):
         print(f"[DEBUG] Embedding chunk {idx+1}/{len(chunks)}")
-        emb = jina_embed(ch)
-        add_chunk(doc_id, ch, emb)
+
+        emb = jina_embed(chunk)         # or Ollama embed if switched
+        add_chunk(doc_id, chunk, emb)
         added += 1
 
-    return {"status": "ok", "doc_id": doc_id, "chunks_added": added}
-class AskRequest(BaseModel):
-    question: str
-    top_k: int = 4
+    return {
+        "status": "ok",
+        "doc_id": doc_id,
+        "chunks_added": added
+    }
+
 
 @app.post("/ask")
 async def ask(req: AskRequest):
@@ -127,11 +138,7 @@ async def ask(req: AskRequest):
         "answer": answer,
         "sources": [d["id"] for d in docs[:req.top_k]]
     }
-class ChatStoreRequest(BaseModel):
-    chat: str
 
-class ChatStoreRequest(BaseModel):
-    chat: str
 
 @app.post("/chat")
 async def chat_analyze(req: ChatStoreRequest):
@@ -220,6 +227,10 @@ Now analyze the chat and respond:
     }
 
 
+@app.delete("/clean-database")
+async def clean_db():
+    result = clean_messed_up_data()
+    return {"status": "ok", "deleted": result["deleted"]}
 
 @app.get("/documents")
 async def list_docs():
@@ -229,6 +240,14 @@ async def list_docs():
         "ids_preview": collection.get(limit=10)["ids"]
     }
 
+@app.get("/find_corrupted-chunks")
+def find_corrupted_chunks_endpoint():
+    """Find and return corrupted chunks in the database."""
+    corrupted_ids = find_corrupted_chunks()
+    return {
+        "corrupted_count": len(corrupted_ids),
+        "corrupted_ids": corrupted_ids
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
